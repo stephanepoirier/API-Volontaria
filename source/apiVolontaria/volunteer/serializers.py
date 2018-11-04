@@ -19,6 +19,10 @@ from . import models
 from .resources import ParticipationResource
 
 from django.utils.translation import ugettext_lazy as _
+from . import functions
+from apiVolontaria.services import service_send_mail
+from django.template.loader import render_to_string
+import datetime;
 
 
 class CycleBasicSerializer(serializers.ModelSerializer):
@@ -414,10 +418,37 @@ class ParticipationBasicSerializer(serializers.ModelSerializer):
 
     # Explicitly declare the BooleanField to make it "required"
     standby = serializers.BooleanField()
+    invit_icalendar = serializers.BooleanField(
+        default=False,
+        write_only=True,
+    )
     user = UserBasicSerializer(
         read_only=True,
         default=serializers.CurrentUserDefault(),
     )
+
+    def create(self, validated_data):
+        invitation_ics = validated_data.pop('invit_icalendar')
+        participation = models.Participation.objects.create(**validated_data)
+
+        if invitation_ics and settings.CONSTANT['EMAIL_SERVICE'] is True:
+            if (os.path.exists(settings.MEDIA_ROOT) == False):
+                os.makedirs(settings.MEDIA_ROOT)
+
+            file_event_path = settings.MEDIA_ROOT + '/' + '%.0f' % datetime.datetime.now().timestamp() + '.ics'
+
+            functions.generate_participation_ics(participation, file_event_path)
+            merge_data = {
+                'DOWNLOAD_URL': file_event_path,
+                'CSS_STYLE': render_to_string('css/calendar_invitation.css')
+            }
+
+            plain_msg = render_to_string("calendar_invitation.txt")
+            msg_html = render_to_string("calendar_invitation.html", merge_data)
+            service_send_mail([participation.user.email], _('invitation calandar'), plain_msg, msg_html)
+
+        participation.save()
+        return participation
 
     class Meta:
         model = models.Participation
@@ -429,11 +460,13 @@ class ParticipationBasicSerializer(serializers.ModelSerializer):
             'subscription_date',
             'presence_duration_minutes',
             'presence_status',
+            'invit_icalendar',
         )
         read_only_fields = [
             'id',
             'presence_duration_minutes',
             'presence_status',
+            'invit_icalendar',
         ]
 
 
